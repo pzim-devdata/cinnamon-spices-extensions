@@ -38,7 +38,7 @@ function _(str) {
 // ── Configuration ──────────────────────────────────────────────────
 
 const HOME = GLib.get_home_dir();
-const THEMES_DIR = HOME + '/.local/share/themes';
+const THEMES_DIR = GLib.get_user_data_dir() + '/themes';
 const SYSTEM_CINNAMON_THEME = '/usr/share/cinnamon/theme';
 const SYSTEM_THEMES = '/usr/share/themes';
 
@@ -817,11 +817,14 @@ function refreshThemes(deskName, appName, wmName) {
 // ── Notifications ──────────────────────────────────────────────────
 
 function notifyResult(text) {
-    const safe = String(text).replace(/['"\\]/g, '');
     try {
-        GLib.spawn_command_line_async(
-            'notify-send -t 120000 -i applications-graphics ' +
-            '"CinnShift" "' + safe + '"');
+        GLib.spawn_async(
+            null,
+            ['notify-send', '-t', '120000',
+             '-i', 'applications-graphics', 'CinnShift', String(text)],
+            null,
+            GLib.SpawnFlags.SEARCH_PATH,
+            null);
     } catch (e) {
         global.log('[CinnShift] ' + text);
     }
