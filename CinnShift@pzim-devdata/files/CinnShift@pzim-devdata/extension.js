@@ -394,6 +394,44 @@ function stripTrailingSuffix(name) {
     return name;
 }
 
+function themeNameExists(name) {
+    return fileExists(THEMES_DIR + '/' + name) ||
+           fileExists(SYSTEM_THEMES + '/' + name) ||
+           (name === 'cinnamon' && fileExists(SYSTEM_CINNAMON_THEME));
+}
+
+// Strip ONE variant token (-cinnshift_extension, -custom, -random
+// or -NUMBER) from the right end. Order irrelevant: the caller
+// loops until no token remains. Returns null when nothing strips.
+function _stripOneVariantToken(name) {
+    const suffixes = [VARIANT_SUFFIX, '-custom', '-random'];
+    for (const suf of suffixes) {
+        if (name.endsWith(suf) && name.length > suf.length) {
+            return name.slice(0, name.length - suf.length);
+        }
+    }
+    const m = name.match(/^(.+)-(\d+)$/);
+    if (m) return m[1];
+    return null;
+}
+
+// Deep reduction: strip every variant token regardless of stacking
+// order (-random-cinnshift_extension, -2-cinnshift_extension,
+// -custom-random-3, ...). Missing intermediate levels are skipped;
+// the result is the DEEPEST ancestor that exists on disk. Falls
+// back to the input name when nothing exists below it.
+function resolveOriginalTheme(name) {
+    let current = name;
+    let best = themeNameExists(current) ? current : null;
+    while (true) {
+        const stripped = _stripOneVariantToken(current);
+        if (stripped === null) break;
+        current = stripped;
+        if (themeNameExists(current)) best = current;
+    }
+    return best !== null ? best : name;
+}
+
 // ── Accent detection and derivative discovery ──────────────────────
 
 function detectAccentColor(themeDir) {
@@ -718,7 +756,10 @@ function shiftOneTheme(sourceName, cfg) {
         const hasColor = targetAccent !== null;
         const hasSelectors = cfg.selectorSpecs.length > 0;
 
-        if (!hasColor && !hasSelectors) {
+        // Mode 'none' always rebuilds the clone from the resolved
+        // original, even without color and without selectors: this
+        // restores the original accent after CLI-generated variants.
+        if (!hasColor && !hasSelectors && cfg.mode !== 'none') {
             result.message = _('Nothing to do (no color, no selector)');
             return result;
         }
@@ -1000,6 +1041,7 @@ function _collectShiftConfig() {
     }
 
     return {
+        mode: mode,
         targetAccent: targetAccent,
         palette: palette,
         selectorSpecs: selectorSpecs
@@ -1007,20 +1049,38 @@ function _collectShiftConfig() {
 }
 
 function _runShift(cfg) {
-    // Guard: nothing to do (no color, no selector): keep themes as-is
-    if (cfg.targetAccent === null && cfg.selectorSpecs.length === 0) {
+    // Guard: nothing to do (no color, no selector): keep themes as-is.
+    // Mode 'none' is exempted: switching to 'none' must always rebuild
+    // the clone from the resolved ORIGINAL theme (see base selection
+    // below), restoring the original accent after CLI variants.
+    if (cfg.mode !== 'none' &&
+        cfg.targetAccent === null &&
+        cfg.selectorSpecs.length === 0) {
         return;
     }
 
     const gtkCurrent = _gsGtk.get_string('gtk-theme');
     const cinCurrent = _gsCin.get_string('name');
 
-    // Always rebuild from the ORIGINAL base theme: strip our suffix
-    // (and legacy -custom / -N) from the currently active names.
-    const appBase = gtkCurrent !== '' ?
-        stripTrailingSuffix(gtkCurrent) : '';
-    const deskBase = cinCurrent !== '' ?
-        stripTrailingSuffix(cinCurrent) : '';
+    // Base selection: 'none' resolves the ORIGINAL theme on disk so
+    // the clone is rebuilt from the true original (accent detection
+    // and selector recoloring use its colors). This walks stacked
+    // CLI suffixes (-random, -N, -custom) with existence checks.
+    // Other modes keep the fast blind strip: the accent gets
+    // overwritten anyway.
+    let appBase = '';
+    let deskBase = '';
+    if (cfg.mode === 'none') {
+        appBase = gtkCurrent !== '' ?
+            resolveOriginalTheme(gtkCurrent) : '';
+        deskBase = cinCurrent !== '' ?
+            resolveOriginalTheme(cinCurrent) : '';
+    } else {
+        appBase = gtkCurrent !== '' ?
+            stripTrailingSuffix(gtkCurrent) : '';
+        deskBase = cinCurrent !== '' ?
+            stripTrailingSuffix(cinCurrent) : '';
+    }
     const sameSource = appBase !== '' && appBase === deskBase;
 
     let resApp = null;
